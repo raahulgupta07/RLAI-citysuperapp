@@ -57,8 +57,8 @@
     </div>
   </div>
 
-  <!-- Description -->
-  <div class="app-card-desc" style="margin-top: 8px; min-height: 32px;">
+  <!-- Description (max 2 lines, truncated) -->
+  <div class="app-card-desc" style="margin-top: 8px; min-height: 32px; max-height: 32px; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;" title={app.description || ''}>
     {app.description || 'No description available'}
   </div>
 
