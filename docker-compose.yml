@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  superapp:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - superapp-data:/app/frontend/data
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  superapp-data:
+    name: city-gpt-superapp-data
