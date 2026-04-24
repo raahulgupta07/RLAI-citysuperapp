@@ -49,6 +49,15 @@
   let testResult = $state('');
   let testLoading = $state(false);
 
+  // Create user modal
+  let showCreateUserModal = $state(false);
+  let newUserUsername = $state('');
+  let newUserDisplayName = $state('');
+  let newUserEmail = $state('');
+  let newUserPassword = $state('');
+  let newUserRole = $state('user');
+  let newUserSaving = $state(false);
+
   // Form state
   let formName = $state('');
   let formSlug = $state('');
@@ -265,6 +274,39 @@
     showToast('Password reset successfully');
   }
 
+  function openCreateUser() {
+    newUserUsername = ''; newUserDisplayName = ''; newUserEmail = '';
+    newUserPassword = ''; newUserRole = 'user'; newUserSaving = false;
+    showCreateUserModal = true;
+  }
+
+  async function createUser() {
+    if (!newUserUsername || !newUserPassword) return;
+    newUserSaving = true;
+    try {
+      const res = await fetch('/api/admin/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: newUserUsername,
+          display_name: newUserDisplayName || newUserUsername,
+          email: newUserEmail,
+          password: newUserPassword,
+          role: newUserRole,
+        }),
+      });
+      if (res.ok) {
+        showCreateUserModal = false;
+        showToast('User created');
+        invalidateAll();
+      } else {
+        const d = await res.json();
+        showToast(d.error || 'Failed to create user');
+      }
+    } catch { showToast('Failed to create user'); }
+    newUserSaving = false;
+  }
+
   function asciiBar(value: number, max: number, len: number = 20): string {
     const filled = Math.max(1, Math.min(len, Math.round((value / Math.max(max, 1)) * len)));
     return '\u2588'.repeat(filled) + '\u2591'.repeat(len - filled);
@@ -472,6 +514,7 @@
     {:else if activeTab === 'USERS'}
       <div class="dark-title-bar" style="margin-bottom: 12px;">
         <span>USERS ({data.users.length})</span>
+        <button class="btn-green" onclick={openCreateUser}>+ CREATE USER</button>
       </div>
 
       <div style="display: flex; gap: 8px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;">
@@ -1269,6 +1312,53 @@
       <div class="modal-footer">
         <button class="btn-ghost" onclick={() => showPasswordModal = false}>CANCEL</button>
         <button class="btn-green" onclick={submitPasswordReset} disabled={!newPassword || newPassword.length < 4}>RESET PASSWORD</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- CREATE USER MODAL -->
+{#if showCreateUserModal}
+  <div class="modal-overlay" onclick={() => showCreateUserModal = false}>
+    <div class="modal-body" onclick={(e) => e.stopPropagation()} style="max-width: 450px;">
+      <div class="modal-header">
+        CREATE LOCAL USER
+        <button onclick={() => showCreateUserModal = false} style="background: none; border: none; color: inherit; font-size: 16px; cursor: pointer;">x</button>
+      </div>
+      <div class="modal-content">
+        <div style="display: flex; flex-direction: column; gap: 10px;">
+          <div>
+            <label class="form-label">USERNAME *</label>
+            <input class="form-input" bind:value={newUserUsername} placeholder="johndoe" />
+          </div>
+          <div>
+            <label class="form-label">DISPLAY NAME</label>
+            <input class="form-input" bind:value={newUserDisplayName} placeholder="John Doe" />
+          </div>
+          <div>
+            <label class="form-label">EMAIL</label>
+            <input class="form-input" type="email" bind:value={newUserEmail} placeholder="john@company.com" />
+          </div>
+          <div>
+            <label class="form-label">PASSWORD *</label>
+            <input class="form-input" type="password" bind:value={newUserPassword} placeholder="Minimum 4 characters" />
+          </div>
+          <div>
+            <label class="form-label">ROLE</label>
+            <select class="form-select" bind:value={newUserRole}>
+              <option value="user">USER</option>
+              <option value="viewer">VIEWER</option>
+              <option value="admin">ADMIN</option>
+              <option value="super_admin">SUPER_ADMIN</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick={() => showCreateUserModal = false}>CANCEL</button>
+        <button class="btn-green" onclick={createUser} disabled={newUserSaving || !newUserUsername || !newUserPassword || newUserPassword.length < 4}>
+          {newUserSaving ? 'CREATING...' : 'CREATE USER'}
+        </button>
       </div>
     </div>
   </div>
