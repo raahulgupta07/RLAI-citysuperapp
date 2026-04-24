@@ -116,7 +116,17 @@ export async function authenticateLdap(
   const mailAttr = config.mail_attr || 'mail';
   const usernameAttr = config.username_attr || 'sAMAccountName';
   const searchBase = config.search_base || '';
-  const searchFilter = (config.search_filter || `(${usernameAttr}={username})`).replace('{username}', username);
+  // Build search filter: replace {username} placeholder, or if filter uses wildcard, make it specific
+  let searchFilter = config.search_filter || `(${usernameAttr}={username})`;
+  if (searchFilter.includes('{username}')) {
+    searchFilter = searchFilter.replace(/\{username\}/g, username);
+  } else if (searchFilter.includes(`${usernameAttr}=*`)) {
+    // Replace wildcard with actual username for login (e.g. sAMAccountName=* → sAMAccountName=john)
+    searchFilter = searchFilter.replace(`${usernameAttr}=*`, `${usernameAttr}=${username}`);
+  } else {
+    // Wrap with AND to add username filter
+    searchFilter = `(&${searchFilter}(${usernameAttr}=${username}))`;
+  }
   const groupAttr = config.group_attr || 'memberOf';
 
   try {
@@ -128,12 +138,23 @@ export async function authenticateLdap(
     const client = ldap.createClient(clientOpts);
 
     return new Promise((resolve) => {
-      const fail = () => {
+      let resolved = false;
+      const done = (result: { success: boolean; groups: string[]; display_name: string; email: string }) => {
+        if (resolved) return;
+        resolved = true;
         try { client.unbind(); } catch {}
-        resolve({ success: false, groups: [], display_name: '', email: '' });
+        resolve(result);
+      };
+      const fail = () => done({ success: false, groups: [], display_name: '', email: '' });
+
+      // Timeout: if LDAP doesn't respond within 15s, fail
+      const timeout = setTimeout(() => fail(), 15000);
+      const succeed = (result: { success: boolean; groups: string[]; display_name: string; email: string }) => {
+        clearTimeout(timeout);
+        done(result);
       };
 
-      client.on('error', () => fail());
+      client.on('error', () => { clearTimeout(timeout); fail(); });
 
       // Step 1: Bind with service account (Application DN) or directly as user
       const bindDn = config.app_dn || '';
@@ -150,14 +171,16 @@ export async function authenticateLdap(
         const searchAttrs = ['cn', 'displayName', mailAttr, groupAttr];
         if (usernameAttr !== 'cn' && usernameAttr !== mailAttr) searchAttrs.push(usernameAttr);
 
+        // Also request the DN itself
+        const searchAttrsWithDn = [...searchAttrs, 'dn'];
+
         client.search(searchBase, {
           filter: searchFilter,
           scope: 'sub',
           attributes: searchAttrs,
         }, (searchErr: any, res: any) => {
           if (searchErr) {
-            try { client.unbind(); } catch {}
-            resolve({ success: !useServiceAccount, groups: ['all'], display_name: username, email: '' });
+            succeed({ success: !useServiceAccount, groups: ['all'], display_name: username, email: '' });
             return;
           }
 
@@ -165,9 +188,13 @@ export async function authenticateLdap(
           let email = '';
           let groups: string[] = [];
           let userDn = '';
+          let foundUser = false;
 
           res.on('searchEntry', (entry: any) => {
-            userDn = entry.objectName || entry.dn?.toString() || '';
+            if (foundUser) return; // only use first match
+            foundUser = true;
+            // Get user DN from entry (try multiple ldapjs versions)
+            userDn = entry.objectName || entry.dn?.toString?.() || entry.dn || '';
             const attrs = entry.ppiAttributes || entry.attributes || [];
             for (const attr of attrs) {
               if (attr.type === 'displayName') display_name = attr.values?.[0] || display_name;
@@ -178,35 +205,37 @@ export async function authenticateLdap(
           });
 
           res.on('end', () => {
+            if (!foundUser) {
+              // User not found in LDAP
+              succeed({ success: false, groups: [], display_name: '', email: '' });
+              return;
+            }
+
             if (!useServiceAccount) {
               // Already authenticated via direct bind
               if (groups.length === 0) groups = ['all'];
-              try { client.unbind(); } catch {}
-              resolve({ success: true, groups, display_name, email });
+              succeed({ success: true, groups, display_name, email });
               return;
             }
 
             // Step 3: If using service account, verify user password by re-binding as user
             if (!userDn) {
-              try { client.unbind(); } catch {}
-              resolve({ success: false, groups: [], display_name: '', email: '' });
-              return;
+              // Fallback: construct DN from username attr if objectName was empty
+              userDn = `${usernameAttr}=${username},${searchBase}`;
             }
 
             client.bind(userDn, password, (userBindErr: any) => {
-              try { client.unbind(); } catch {}
               if (userBindErr) {
-                resolve({ success: false, groups: [], display_name: '', email: '' });
+                succeed({ success: false, groups: [], display_name: '', email: '' });
                 return;
               }
               if (groups.length === 0) groups = ['all'];
-              resolve({ success: true, groups, display_name, email });
+              succeed({ success: true, groups, display_name, email });
             });
           });
 
           res.on('error', () => {
-            try { client.unbind(); } catch {}
-            resolve({ success: !useServiceAccount, groups: ['all'], display_name, email });
+            succeed({ success: !useServiceAccount, groups: ['all'], display_name, email });
           });
         });
       });
