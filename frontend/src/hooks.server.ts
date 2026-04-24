@@ -9,9 +9,13 @@ export const handle: Handle = async ({ event, resolve }) => {
   // CORS protection: reject cross-origin mutating API requests
   if (event.url.pathname.startsWith('/api/') && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(event.request.method)) {
     const origin = event.request.headers.get('origin');
-    const host = event.url.origin;
-    if (origin && origin !== host) {
-      return new Response('Forbidden', { status: 403 });
+    if (origin) {
+      // Extract hostname:port from origin and compare with Host header
+      const originHost = new URL(origin).host;
+      const requestHost = event.request.headers.get('host') || event.url.host;
+      if (originHost !== requestHost) {
+        return new Response('Forbidden', { status: 403 });
+      }
     }
   }
 
