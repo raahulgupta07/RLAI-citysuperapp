@@ -1,7 +1,42 @@
 import { SignJWT, jwtVerify } from 'jose';
+import { randomBytes } from 'crypto';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import type { Cookies } from '@sveltejs/kit';
 
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'superapp-secret-change-me-in-prod');
+// Auto-generate JWT secret if not set in .env
+// Persists to data/.jwt_secret so it survives container restarts
+function getJwtSecret(): Uint8Array {
+  // 1. Use env var if set and not default
+  const envSecret = process.env.JWT_SECRET;
+  if (envSecret && envSecret !== 'superapp-secret-change-me-in-prod' && envSecret !== 'superapp-dev-secret') {
+    return new TextEncoder().encode(envSecret);
+  }
+
+  // 2. Use persisted secret if exists
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const secretPath = join(__dirname, '..', '..', '..', 'data', '.jwt_secret');
+
+  try {
+    if (existsSync(secretPath)) {
+      const saved = readFileSync(secretPath, 'utf-8').trim();
+      if (saved.length >= 32) return new TextEncoder().encode(saved);
+    }
+  } catch {}
+
+  // 3. Generate new secret and persist it
+  const newSecret = randomBytes(32).toString('hex');
+  try {
+    mkdirSync(join(__dirname, '..', '..', '..', 'data'), { recursive: true });
+    writeFileSync(secretPath, newSecret, { mode: 0o600 });
+  } catch {}
+
+  return new TextEncoder().encode(newSecret);
+}
+
+const JWT_SECRET = getJwtSecret();
 const COOKIE_NAME = 'superapp_token';
 
 export interface JwtPayload {

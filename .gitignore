@@ -3,6 +3,8 @@ frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
 frontend/data/superapp.db
+frontend/data/.jwt_secret
+frontend/data/backups/
 .env
 *.log
 .DS_Store
