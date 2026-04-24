@@ -199,4 +199,11 @@ export function migrate(sqlite: Database.Database) {
   }
 
   // No seed apps — super admin adds apps via Settings > Apps > + ADD APP
+
+  // Security warning: default credentials
+  const adminPass = process.env.SUPER_ADMIN_PASS || 'admin';
+  if (adminPass === 'admin') {
+    console.warn('\n⚠️  WARNING: Super admin password is set to default "admin".');
+    console.warn('   Change SUPER_ADMIN_PASS in .env for production!\n');
+  }
 }

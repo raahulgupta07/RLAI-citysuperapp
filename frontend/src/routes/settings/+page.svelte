@@ -450,6 +450,20 @@
     <span style="font-size: 14px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.04em;">Super Admin Panel</span>
   </div>
 
+  <!-- Security Warnings -->
+  {#if data.securityWarnings?.defaultPassword || data.securityWarnings?.defaultJwt}
+    <div style="background: #fff3cd; border: 2px solid #ff9d00; border-right-width: 4px; border-bottom-width: 4px; padding: 10px 14px; margin-bottom: 12px; font-size: 11px; font-weight: 700; color: #856404;">
+      SECURITY WARNING:
+      {#if data.securityWarnings.defaultPassword}
+        Super admin password is set to default "admin".
+      {/if}
+      {#if data.securityWarnings.defaultJwt}
+        JWT secret is using default value.
+      {/if}
+      Change these in your .env file for production.
+    </div>
+  {/if}
+
   <!-- Tabs -->
   <div class="dash-tabs">
     {#each tabs as tab}

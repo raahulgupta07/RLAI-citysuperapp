@@ -279,5 +279,9 @@ export const load: PageServerLoad = async ({ locals }) => {
       tableCounts,
       appsZeroLaunches: (appsZeroLaunches as any)?.count || 0,
     },
+    securityWarnings: {
+      defaultPassword: (process.env.SUPER_ADMIN_PASS || 'admin') === 'admin',
+      defaultJwt: (process.env.JWT_SECRET || '') === 'superapp-secret-change-me-in-prod',
+    },
   };
 };

@@ -51,10 +51,10 @@ export interface JwtPayload {
   ldap_groups: string[];
 }
 
-export async function signJwt(payload: JwtPayload): Promise<string> {
+export async function signJwt(payload: JwtPayload, rememberMe = false): Promise<string> {
   return new SignJWT({ ...payload })
     .setProtectedHeader({ alg: 'HS256' })
-    .setExpirationTime('24h')
+    .setExpirationTime(rememberMe ? '30d' : '24h')
     .setIssuedAt()
     .sign(JWT_SECRET);
 }
@@ -68,13 +68,13 @@ export async function verifyJwt(token: string): Promise<JwtPayload | null> {
   }
 }
 
-export function setAuthCookie(cookies: Cookies, token: string) {
+export function setAuthCookie(cookies: Cookies, token: string, rememberMe = false) {
   cookies.set(COOKIE_NAME, token, {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
-    secure: false, // set true in production with HTTPS
-    maxAge: 60 * 60 * 24, // 24 hours
+    secure: IS_PRODUCTION,
+    maxAge: rememberMe ? 60 * 60 * 24 * 30 : 60 * 60 * 24, // 30 days or 24 hours
   });
 }
 
@@ -216,7 +216,27 @@ export async function authenticateLdap(
   }
 }
 
-// Local password check (simple hash comparison for dev)
-export function checkLocalPassword(inputPass: string, expectedPass: string): boolean {
-  return inputPass === expectedPass;
+// Password hashing with bcrypt
+import bcrypt from 'bcryptjs';
+
+const BCRYPT_ROUNDS = 10;
+
+export async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, BCRYPT_ROUNDS);
 }
+
+export async function checkLocalPassword(inputPass: string, storedHash: string): Promise<boolean> {
+  // Support legacy plain text passwords: bcrypt hashes start with $2
+  if (storedHash.startsWith('$2')) {
+    return bcrypt.compare(inputPass, storedHash);
+  }
+  // Plain text fallback (legacy) — matches and will be migrated on login
+  return inputPass === storedHash;
+}
+
+export function isPasswordHashed(hash: string): boolean {
+  return hash.startsWith('$2');
+}
+
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+export { IS_PRODUCTION };

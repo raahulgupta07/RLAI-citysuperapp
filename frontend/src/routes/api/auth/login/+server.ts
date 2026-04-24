@@ -2,47 +2,36 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { users, authProviders } from '$lib/server/schema';
-import { signJwt, setAuthCookie, authenticateLdap, type LdapConfig } from '$lib/server/auth';
+import { signJwt, setAuthCookie, authenticateLdap, type LdapConfig, checkLocalPassword, hashPassword, isPasswordHashed } from '$lib/server/auth';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from '$lib/server/activity';
+import { checkRateLimit } from '$lib/server/ratelimit';
 
 const SUPER_ADMIN_USER = process.env.SUPER_ADMIN_USER || 'admin';
 const SUPER_ADMIN_PASS = process.env.SUPER_ADMIN_PASS || 'admin';
 
 export const POST: RequestHandler = async ({ request, cookies }) => {
   const body = await request.json();
-  const { username, password, authMethod, register } = body;
+  const { username, password, authMethod, register, rememberMe } = body;
 
   if (!username || !password) {
     return json({ error: 'Username and password required' }, { status: 400 });
   }
 
-  // Registration mode (local only)
-  if (register && authMethod === 'local') {
-    const existing = db.select().from(users).where(eq(users.username, username)).get();
-    if (existing) {
-      return json({ error: 'Username already exists' }, { status: 409 });
-    }
-    const newUser = db.insert(users).values({
-      username,
-      display_name: username,
-      email: '',
-      role: 'user',
-      password_hash: password, // dev mode: storing as-is
-      ldap_groups: JSON.stringify(['all']),
-      last_login: new Date().toISOString(),
-    }).returning().get();
+  // Rate limiting: 5 attempts per username, 20 per IP, 15-minute window
+  const ip = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+  const userLimit = checkRateLimit(`user:${username}`, 5, 15 * 60 * 1000);
+  const ipLimit = checkRateLimit(`ip:${ip}`, 20, 15 * 60 * 1000);
+  if (!userLimit.allowed) {
+    return json({ error: `Too many login attempts. Try again in ${userLimit.retryAfterSec}s` }, { status: 429 });
+  }
+  if (!ipLimit.allowed) {
+    return json({ error: `Too many login attempts from this IP. Try again in ${ipLimit.retryAfterSec}s` }, { status: 429 });
+  }
 
-    const token = await signJwt({
-      id: newUser.id,
-      username: newUser.username,
-      display_name: username,
-      email: '',
-      role: 'user',
-      ldap_groups: ['all'],
-    });
-    setAuthCookie(cookies, token);
-    return json({ user: { id: newUser.id, username, display_name: username, role: 'user' } });
+  // Self-registration disabled — only admins can create users via Settings > USERS
+  if (register) {
+    return json({ error: 'Registration disabled. Contact your administrator.' }, { status: 403 });
   }
 
   let ldap_groups: string[] = ['all'];
@@ -118,18 +107,26 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       display_name = 'Super Admin';
       ldap_groups = ['all', 'admin'];
     }
-    // Check DB user with password
+    // Check DB user with password (bcrypt)
     if (!authenticated) {
       const dbUser = db.select().from(users).where(eq(users.username, username)).get();
-      if (dbUser && (dbUser as any).password_hash === password) {
-        authenticated = true;
-        display_name = dbUser.display_name || username;
-        email = dbUser.email || '';
-        role = dbUser.role || 'user';
-        try {
-          ldap_groups = JSON.parse(dbUser.ldap_groups || '["all"]');
-        } catch {
-          ldap_groups = ['all'];
+      if (dbUser && (dbUser as any).password_hash) {
+        const passMatch = await checkLocalPassword(password, (dbUser as any).password_hash);
+        if (passMatch) {
+          authenticated = true;
+          display_name = dbUser.display_name || username;
+          email = dbUser.email || '';
+          role = dbUser.role || 'user';
+          try {
+            ldap_groups = JSON.parse(dbUser.ldap_groups || '["all"]');
+          } catch {
+            ldap_groups = ['all'];
+          }
+          // Migrate plain text password to bcrypt on successful login
+          if (!isPasswordHashed((dbUser as any).password_hash)) {
+            const hashed = await hashPassword(password);
+            db.update(users).set({ password_hash: hashed } as any).where(eq(users.id, dbUser.id)).run();
+          }
         }
       }
     }
@@ -166,15 +163,22 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
 
     if (!authenticated) {
       const dbUser = db.select().from(users).where(eq(users.username, username)).get();
-      if (dbUser && (dbUser as any).password_hash === password) {
-        authenticated = true;
-        display_name = dbUser.display_name || username;
-        email = dbUser.email || '';
-        role = dbUser.role || 'user';
-        try {
-          ldap_groups = JSON.parse(dbUser.ldap_groups || '["all"]');
-        } catch {
-          ldap_groups = ['all'];
+      if (dbUser && (dbUser as any).password_hash) {
+        const passMatch = await checkLocalPassword(password, (dbUser as any).password_hash);
+        if (passMatch) {
+          authenticated = true;
+          display_name = dbUser.display_name || username;
+          email = dbUser.email || '';
+          role = dbUser.role || 'user';
+          try {
+            ldap_groups = JSON.parse(dbUser.ldap_groups || '["all"]');
+          } catch {
+            ldap_groups = ['all'];
+          }
+          if (!isPasswordHashed((dbUser as any).password_hash)) {
+            const hashed = await hashPassword(password);
+            db.update(users).set({ password_hash: hashed } as any).where(eq(users.id, dbUser.id)).run();
+          }
         }
       }
     }
@@ -224,9 +228,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     email,
     role,
     ldap_groups,
-  });
+  }, !!rememberMe);
 
-  setAuthCookie(cookies, token);
+  setAuthCookie(cookies, token, !!rememberMe);
 
   logActivity({
     user_id: user.id,

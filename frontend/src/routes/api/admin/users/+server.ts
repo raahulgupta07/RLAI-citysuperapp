@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { users } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
+import { hashPassword } from '$lib/server/auth';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') {
@@ -32,7 +33,7 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     username,
     display_name: display_name || username,
     email: email || '',
-    password_hash: password,
+    password_hash: await hashPassword(password),
     role: userRole,
     auth_source: 'local',
     status: 'active',

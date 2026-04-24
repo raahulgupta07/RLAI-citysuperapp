@@ -6,6 +6,7 @@
   let error = $state('');
   let loading = $state(false);
   let showPassword = $state(false);
+  let rememberMe = $state(false);
   let authMethod = $state<'local' | 'ldap' | 'sso'>('local');
   let registerMode = $state(false);
   let ssoEnabled = $state(false);
@@ -126,6 +127,7 @@
           password,
           authMethod,
           register: registerMode,
+          rememberMe,
         }),
       });
       const data = await res.json();
@@ -478,23 +480,19 @@
               <div class="auth-method-note">(Authenticating via LDAP)</div>
             {/if}
 
+            <label class="remember-me">
+              <input type="checkbox" bind:checked={rememberMe} />
+              <span>REMEMBER ME (30 DAYS)</span>
+            </label>
+
             <button
               class="login-btn"
               onclick={handleLogin}
               disabled={loading}
             >
-              {loading ? 'AUTHENTICATING...' : registerMode ? 'REGISTER_ACCOUNT' : 'INITIATE_AUTHENTICATION'}
+              {loading ? 'AUTHENTICATING...' : 'INITIATE_AUTHENTICATION'}
             </button>
 
-            {#if authMethod === 'local'}
-              <button
-                class="register-toggle"
-                onclick={() => { registerMode = !registerMode; error = ''; }}
-                type="button"
-              >
-                {registerMode ? '\u2190 BACK TO LOGIN' : 'NEW USER? REGISTER'}
-              </button>
-            {/if}
           {/if}
         </div>
       </div>
@@ -838,6 +836,22 @@
     color: #888;
     margin-bottom: 12px;
     letter-spacing: 0.04em;
+  }
+
+  .remember-me {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 10px;
+    color: #888;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    margin-bottom: 12px;
+    user-select: none;
+  }
+
+  .remember-me input[type="checkbox"] {
+    cursor: pointer;
   }
 
   /* ===== Buttons ===== */

@@ -25,7 +25,7 @@
           <button onclick={() => window.location.href = '/settings'} class="navbar-btn">SETTINGS</button>
         {/if}
         <span class="navbar-user">{data.user?.display_name || data.user?.username}</span>
-        <button onclick={logout} class="navbar-btn">EXIT</button>
+        <button onclick={logout} class="navbar-btn">LOGOUT</button>
       </div>
     </nav>
 

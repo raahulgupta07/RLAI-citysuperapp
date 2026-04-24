@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { apps, appRoles, appUsage, activityLog, favorites } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
+import { sanitizeText, sanitizeUrl } from '$lib/server/sanitize';
 
 export const PUT: RequestHandler = async ({ params, request, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') {
@@ -13,10 +14,10 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
   const body = await request.json();
 
   db.update(apps).set({
-    name: body.name,
+    name: sanitizeText(body.name),
     slug: body.slug,
-    url: body.url,
-    description: body.description || '',
+    url: sanitizeUrl(body.url),
+    description: sanitizeText(body.description || ''),
     category_id: body.category_id,
     launch_mode: body.launch_mode || 'redirect',
     icon: body.icon || '',

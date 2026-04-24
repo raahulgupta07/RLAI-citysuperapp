@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import { authProviders } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
 import { randomBytes, createHash } from 'crypto';
+import { IS_PRODUCTION } from '$lib/server/auth';
 
 // OIDC endpoint config per provider type
 function getOidcEndpoints(type: string, config: any) {
@@ -95,7 +96,7 @@ export const GET: RequestHandler = async ({ url, cookies }) => {
     path: '/',
     httpOnly: true,
     sameSite: 'lax',
-    secure: false,
+    secure: IS_PRODUCTION,
     maxAge: 600,
   });
 
