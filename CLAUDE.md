@@ -1,12 +1,13 @@
 # CLAUDE.md — City GPT SuperApp
 
 ## Overview
-City GPT SuperApp is a unified AI agent launcher portal. Super admins configure AI apps, auth providers (LDAP/Keycloak/Local), and user roles from a web UI. Users login, see app cards filtered by their permissions, and launch or embed apps — all from one place.
+City GPT SuperApp is a unified AI agent launcher portal. Super admins configure AI apps, auth providers (LDAP/SSO/Local), and user roles from a web UI. Users login, see app cards filtered by their permissions, and launch or embed apps — all from one place.
 
 ## Tech Stack
 - **Frontend**: SvelteKit 2 + Svelte 5 (runes) + Tailwind CSS v4
 - **Database**: SQLite 3 (better-sqlite3 + Drizzle ORM)
-- **Auth**: Multi-provider (Local + LDAP + Keycloak SSO) — all configurable from UI
+- **Auth**: Multi-provider (Local + LDAP + SSO via Keycloak/Google/Microsoft) — all configurable from UI
+- **Security**: Bcrypt hashing, rate limiting, CORS, CSP, input sanitization, session management
 - **Design**: Brutalist aesthetic (Space Grotesk, no border-radius, asymmetric borders, stamp shadows)
 - **Deployment**: Docker + Node adapter
 - **Port**: 3000
@@ -19,21 +20,24 @@ City-GPT-SuperApp/
 │   │   ├── app.css                 ← Brutalist design system (from City-Dash)
 │   │   ├── app.html                ← HTML + Space Grotesk font
 │   │   ├── app.d.ts                ← TypeScript declarations
-│   │   ├── hooks.server.ts         ← Auth hook (loads user on every request)
+│   │   ├── hooks.server.ts         ← Auth hook (loads user on every request, security headers, CORS, disabled-user auto-logout)
 │   │   ├── lib/
 │   │   │   ├── server/
 │   │   │   │   ├── db.ts           ← SQLite + Drizzle connection (WAL mode)
 │   │   │   │   ├── schema.ts       ← 9 tables: users, apps, categories, app_roles, favorites, app_usage, activity_log, sso_users, auth_providers, settings
-│   │   │   │   ├── auth.ts         ← JWT (jose) + LDAP bind + cookie helpers
-│   │   │   │   ├── migrate.ts      ← Auto-migration + seed on startup
-│   │   │   │   └── activity.ts     ← Activity logging helper
+│   │   │   │   ├── auth.ts         ← JWT (jose) + LDAP service-account bind + cookie helpers
+│   │   │   │   ├── migrate.ts      ← Auto-migration + seed on startup (auth settings seeded)
+│   │   │   │   ├── activity.ts     ← Activity logging helper
+│   │   │   │   ├── ratelimit.ts    ← Rate limiter (5/username + 20/IP per 15 min window)
+│   │   │   │   ├── sanitize.ts     ← Input sanitization (XSS) + URL validation (http/https only)
+│   │   │   │   └── session.ts      ← Session management (token blacklist, invalidation on logout)
 │   │   │   ├── AppCard.svelte      ← App card (icon, domain, description, info popup, launch/embed)
 │   │   │   ├── IconPicker.svelte   ← Emoji icon picker (80+ icons, searchable)
 │   │   │   └── index.ts
 │   │   └── routes/
-│   │       ├── +layout.svelte      ← Navbar (SETTINGS, EXIT), auth guard
+│   │       ├── +layout.svelte      ← Navbar (SETTINGS, LOGOUT), auth guard
 │   │       ├── +layout.server.ts   ← Load user, redirect if not auth'd
-│   │       ├── login/              ← Terminal-style login (LOCAL/LDAP/SSO tabs, boot animation)
+│   │       ├── login/              ← Dynamic login (LOCAL/LDAP/SSO tabs — only enabled methods shown)
 │   │       ├── home/               ← Card grid dashboard (search, category tabs, favorites)
 │   │       ├── embed/[slug]/       ← Iframe embed with loading animation
 │   │       ├── settings/           ← Admin panel (6 tabs: APPS/CATEGORIES/USERS/LOGS/ANALYTICS/AUTH)
@@ -42,7 +46,8 @@ City-GPT-SuperApp/
 │   │           ├── auth/           ← login, logout, me, oidc/*, providers
 │   │           ├── apps/           ← user-facing app list + launch logging
 │   │           ├── favorites/      ← toggle favorites
-│   │           └── admin/          ← CRUD: apps, categories, users, auth-providers, analytics
+│   │           ├── health/         ← GET /api/health (Docker healthcheck endpoint)
+│   │           └── admin/          ← CRUD: apps, categories, users, auth-providers, auth-settings, analytics
 │   ├── data/
 │   │   └── superapp.db             ← SQLite database (auto-created)
 │   ├── package.json
@@ -62,47 +67,116 @@ City-GPT-SuperApp/
 
 | Table | Purpose |
 |-------|---------|
-| `users` | User accounts (username, role, auth_source, status, password_hash) |
+| `users` | User accounts (username, role, auth_source, status, password_hash — bcrypt) |
 | `apps` | Registered apps/agents (name, URL, icon, launch_mode, status) |
 | `categories` | App categories (AI Agents, Open WebUI, Tools) |
 | `app_roles` | LDAP group → app visibility mapping |
 | `favorites` | Per-user app favorites |
 | `app_usage` | App launch tracking |
-| `activity_log` | All user activity (login, logout, app_launch, with IP + user agent) |
-| `sso_users` | Keycloak/SSO provider user data |
-| `auth_providers` | Auth provider config (LDAP servers, Keycloak instances) — UI-managed |
-| `settings` | Portal settings (title, subtitle) |
+| `activity_log` | All user activity (login, logout, app_launch, admin actions, with IP + user agent) |
+| `sso_users` | SSO provider user data (Keycloak/Google/Microsoft) |
+| `auth_providers` | Auth provider config (LDAP servers, Keycloak/Google/Microsoft instances) — UI-managed. CHECK constraint on type removed to support all provider types. |
+| `settings` | Portal settings (title, subtitle, auth method toggles). Auth settings seeded on startup. |
 
-Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
+Auto-migrated on startup. New columns added via ALTER TABLE with try/catch. Auth settings (LOCAL/LDAP/SSO enable flags) seeded in settings table on first run.
 
 ## Auth System
 
-### 3 Auth Methods (all configurable from UI)
-1. **Local** — username/password stored in SQLite. Registration available.
-2. **LDAP** — bind authentication. Multiple LDAP servers supported, tried in priority order.
-3. **Keycloak SSO** — OIDC flow. Multiple Keycloak instances supported.
+### 3 Auth Methods (all configurable from UI, individually toggleable)
+1. **Local** — username/password stored in SQLite with bcrypt hashing. No self-registration (admin creates users only).
+2. **LDAP** — service-account bind authentication. Application DN binds first, searches for user, then re-binds with user credentials. Multiple LDAP servers supported, tried in priority order.
+3. **SSO** — OIDC flow supporting **Keycloak**, **Google**, and **Microsoft** providers. Multiple instances of each supported.
+
+### Auth Method Toggles
+- Each method (LOCAL, LDAP, SSO) can be independently enabled/disabled from Settings > AUTH
+- Login page dynamically shows only enabled methods as tabs
+- At least one method must remain enabled
 
 ### Auth Provider Management (Settings → AUTH tab)
-- Add/edit/delete LDAP and Keycloak providers from UI
+- **Auth method toggles**: enable/disable LOCAL, LDAP, SSO independently
+- **4 provider types**: LDAP, Keycloak, Google, Microsoft
+- Add/edit/delete providers from UI
 - No .env changes needed — DB config takes priority
-- TEST button validates LDAP connection or Keycloak OIDC discovery
+- TEST button validates LDAP connection or OIDC discovery
 - Priority ordering for LDAP fallback chain
 - Client secrets masked in API responses
-- Local Auth always present (can't delete)
+
+### LDAP Configuration Fields
+- Host, Port
+- Application DN (service account for bind+search)
+- Application DN Password
+- Mail Attribute
+- Username Attribute
+- Search Base
+- Search Filter
+- Group Attribute
+- TLS toggle (on/off)
+
+### LDAP Bind Flow
+1. Bind with Application DN + Application DN Password (service account)
+2. Search for user by username using Search Base + Search Filter
+3. Re-bind with found user's DN + user-entered password
+4. Extract attributes (mail, groups) from search result
+
+### SSO / OIDC Flow
+- Supports Keycloak, Google, Microsoft providers
+- CSRF protection via `state` parameter
+- PKCE S256 challenge/verifier
+- Hardcoded redirect URI (no dynamic construction)
+- Per-provider buttons with brand icons on login page
 
 ### Auth Flow
-1. User picks LOCAL/LDAP/SSO on login page
-2. LOCAL → check super admin env vars → check DB users with password_hash
-3. LDAP → loop through active LDAP providers in priority order → bind attempt
-4. SSO → redirect to selected Keycloak instance → OIDC callback → JWT
+1. User picks LOCAL/LDAP/SSO on login page (only enabled methods shown)
+2. LOCAL → check super admin env vars → check DB users with bcrypt password_hash
+3. LDAP → loop through active LDAP providers in priority order → service-account bind → search → user bind
+4. SSO → redirect to selected provider (Keycloak/Google/Microsoft) → OIDC callback with PKCE + state → JWT
 5. On success: upsert user in DB, set auth_source, sign JWT, set HttpOnly cookie
-6. Activity logged: login action with auth method, IP, user agent
+6. Disabled user check on login (rejected) + on every request (auto-logout)
+7. Activity logged: login action with auth method, IP, user agent
 
 ### User Roles
 - `super_admin` — full access to Settings panel
 - `admin` — elevated access (future use)
 - `user` — standard user
 - `viewer` — read-only (future use)
+
+## Security
+
+### Password Security
+- **Bcrypt hashing** via bcryptjs (10 salt rounds)
+- Auto-migration of legacy plain-text passwords to bcrypt on login
+- **Password policy**: minimum 8 characters, at least 1 uppercase, 1 lowercase, 1 number
+
+### Rate Limiting
+- 5 failed attempts per username per 15-minute window
+- 20 failed attempts per IP per 15-minute window
+- Returns 429 Too Many Requests with retry-after hint
+
+### Session Management
+- JWT-based sessions with HttpOnly cookies
+- Token blacklist — tokens invalidated on logout
+- Disabled user auto-logout enforced on every request via hooks.server.ts
+
+### Security Headers (hooks.server.ts)
+- `Content-Security-Policy` — restrictive CSP
+- `X-Frame-Options: DENY`
+- `X-Content-Type-Options: nosniff`
+- `X-XSS-Protection: 1; mode=block`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy` — restrictive feature policy
+- `Strict-Transport-Security` — HSTS enabled in production
+
+### CORS
+- Cross-origin mutating API requests (POST/PUT/DELETE) rejected
+- Origin checked against request host
+
+### Input Sanitization
+- XSS sanitization on app name, description, URL fields
+- URL validation enforces http/https scheme only
+
+### Secrets Handling
+- Client secrets and passwords masked in API responses
+- Default credential security warning banner shown to super admin
 
 ## Settings Panel (6 tabs)
 
@@ -111,6 +185,7 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 - Search + filter by status/mode
 - Enable/disable apps with one click
 - LDAP group access control per app
+- Input sanitization on name/description/URL
 
 ### CATEGORIES — Organize apps
 - CRUD for categories (AI Agents, Open WebUI, Tools, custom)
@@ -118,6 +193,7 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 
 ### USERS — User management
 - **+ CREATE USER** — create local users with username, display name, email, password, role
+- Password policy enforced (8+ chars, 1 upper, 1 lower, 1 number)
 - View all users with auth source, role, status, login count, first/last login
 - Change role via dropdown (super_admin/admin/user/viewer)
 - Enable/disable users
@@ -127,6 +203,7 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 
 ### LOGS — Activity audit trail
 - All user actions: login, logout, app_launch
+- All admin actions logged (user create/edit, app CRUD, provider changes, auth setting changes)
 - Timestamp, user, action (color-coded), detail, IP address
 - Search + filter by action type
 
@@ -141,18 +218,26 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 - **Per-user table**: logins, launches, total actions, last active
 - **System health**: table record counts, app/user status breakdown
 
-### AUTH — Auth provider management
-- CRUD for LDAP and Keycloak providers
+### AUTH — Auth provider & method management
+- **Auth method toggles**: enable/disable LOCAL, LDAP, SSO independently (switches)
+- **4 provider types**: LDAP, Keycloak, Google, Microsoft
+- Add/edit/delete providers with all relevant fields
+- LDAP fields: Host, Port, Application DN, Application DN Password, Mail Attribute, Username Attribute, Search Base, Search Filter, Group Attribute, TLS toggle
 - Test connection button
-- Enable/disable providers
-- Multiple LDAP servers + multiple Keycloak instances
+- Enable/disable individual providers
+- Multiple LDAP servers + multiple SSO instances
+- API: GET/PUT /api/admin/auth-settings (toggle methods), CRUD /api/admin/auth-providers
 
 ## Login Page
 - Brutalist terminal UI matching City-Dash aesthetic
 - Split layout: LEFT = terminal boot animation with robot icon, RIGHT = cream login form
-- 3 auth tabs: LOCAL / LDAP / SSO
+- **Dynamic auth tabs** — only enabled methods shown (LOCAL / LDAP / SSO)
+- **Remember me checkbox** — 30 days if checked, 24 hours if unchecked
+- **No self-registration** — admin creates all user accounts
+- **SSO tab** shows per-provider buttons with brand icons (Google, Microsoft, Keycloak)
 - Post-login CLI transition: shows operator info, loads each app dynamically from DB
-- Register option for local auth
+- **LOGOUT** button (not EXIT) in navbar after login
+- **Security warning banner** shown when using default admin/admin credentials
 
 ## Home Page
 - Card grid with app cards:
@@ -172,11 +257,17 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 - Back button to return to home
 - Navbar stays visible
 
-## Activity Logging
+## Health Check
+- `GET /api/health` — returns `{ status: "ok" }` with 200
+- Docker healthcheck configured in Dockerfile (`HEALTHCHECK` instruction)
+- Used for container orchestration readiness/liveness probes
+
+## Activity & Audit Logging
 Every action is logged to `activity_log`:
 - `login` — with auth method (LOCAL/LDAP/SSO), IP, user agent
-- `logout` — when user clicks EXIT
+- `logout` — when user clicks LOGOUT
 - `app_launch` — when user clicks LAUNCH on a card
+- **Admin actions** — user create/edit/disable, app CRUD, category changes, auth provider changes, auth setting toggles — all logged with actor, action, detail, IP
 
 ## Design System (from City-Dash)
 - **Colors**: cream (#feffd6), neon green (#00fc40), dark (#1a1a2e)
@@ -209,6 +300,7 @@ rm -f frontend/data/superapp.db && docker compose down && docker volume rm city-
 - **Username**: admin
 - **Password**: admin
 - **Role**: super_admin
+- Security warning banner shown until default credentials are changed
 
 ## Environment Variables
 
@@ -221,12 +313,14 @@ rm -f frontend/data/superapp.db && docker compose down && docker volume rm city-
 | KEYCLOAK_URL | (empty) | Fallback Keycloak URL (prefer UI config) |
 | NODE_ENV | development | Set to 'production' in Docker |
 
-**Note**: LDAP and Keycloak are best configured from the UI (Settings → AUTH tab). Env vars serve as fallback only.
+**Note**: LDAP and SSO providers are best configured from the UI (Settings → AUTH tab). Env vars serve as fallback only.
 
 ## Production Checklist
 - [ ] Change JWT_SECRET to a strong random string
 - [ ] Change SUPER_ADMIN_PASS to a strong password
-- [ ] Configure LDAP/Keycloak providers via Settings → AUTH
+- [ ] Configure LDAP/SSO providers via Settings → AUTH
 - [ ] Set up Nginx/Caddy reverse proxy with SSL
 - [ ] Mount SQLite volume for persistence
 - [ ] Add your apps via Settings → APPS → + ADD APP
+- [ ] Verify health endpoint: `curl http://localhost:3000/api/health`
+- [ ] Review security headers in production
