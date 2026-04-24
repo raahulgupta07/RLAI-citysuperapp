@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { settings } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '$lib/server/activity';
 
 const AUTH_KEYS = ['auth_local_enabled', 'auth_ldap_enabled', 'auth_sso_enabled'] as const;
 
@@ -32,5 +33,7 @@ export const PUT: RequestHandler = async ({ request, locals }) => {
       }
     }
   }
+  const changes = AUTH_KEYS.filter(k => k in body).map(k => `${k.replace('auth_', '').replace('_enabled', '')}=${body[k] ? 'on' : 'off'}`).join(', ');
+  if (changes) logActivity({ user_id: locals.user.id, action: 'admin_auth_toggle', detail: `Auth toggles: ${changes}` });
   return json({ success: true });
 };

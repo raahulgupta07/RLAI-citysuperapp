@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { apps, appRoles } from '$lib/server/schema';
 import { sanitizeText, sanitizeUrl } from '$lib/server/sanitize';
+import { logActivity } from '$lib/server/activity';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') {
@@ -33,5 +34,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     db.insert(appRoles).values({ app_id: result.id, ldap_group: group }).run();
   }
 
+  logActivity({ user_id: locals.user.id, action: 'admin_app_create', detail: `Created app: ${name}`, app_id: result.id });
   return json({ app: result });
 };

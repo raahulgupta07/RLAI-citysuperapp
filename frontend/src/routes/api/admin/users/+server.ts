@@ -3,7 +3,8 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { users } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
-import { hashPassword } from '$lib/server/auth';
+import { hashPassword, validatePassword } from '$lib/server/auth';
+import { logActivity } from '$lib/server/activity';
 
 export const POST: RequestHandler = async ({ request, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') {
@@ -16,8 +17,9 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     return json({ error: 'Username and password required' }, { status: 400 });
   }
 
-  if (password.length < 4) {
-    return json({ error: 'Password must be at least 4 characters' }, { status: 400 });
+  const passError = validatePassword(password);
+  if (passError) {
+    return json({ error: passError }, { status: 400 });
   }
 
   // Check if username already exists
@@ -40,5 +42,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     ldap_groups: JSON.stringify(['all']),
   }).returning().get();
 
+  logActivity({ user_id: locals.user.id, action: 'admin_user_create', detail: `Created user: ${username} (role: ${userRole})` });
   return json({ user: { id: result.id, username: result.username } });
 };

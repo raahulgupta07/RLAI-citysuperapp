@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { authProviders } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '$lib/server/activity';
 
 export const PUT: RequestHandler = async ({ params, request, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') return json({ error: 'Forbidden' }, { status: 403 });
@@ -38,15 +39,17 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
     priority: body.priority ?? 0,
     updated_at: new Date().toISOString(),
   }).where(eq(authProviders.id, id)).run();
+  logActivity({ user_id: locals.user.id, action: 'admin_provider_update', detail: `Updated provider #${id}: ${body.name}` });
   return json({ ok: true });
 };
 
 export const DELETE: RequestHandler = async ({ params, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') return json({ error: 'Forbidden' }, { status: 403 });
   const id = parseInt(params.id);
-  // Don't allow deleting the local provider
   const provider = db.select().from(authProviders).where(eq(authProviders.id, id)).get();
   if (provider?.type === 'local') return json({ error: 'Cannot delete local auth' }, { status: 400 });
+  const provName = provider?.name || `#${id}`;
   db.delete(authProviders).where(eq(authProviders.id, id)).run();
+  logActivity({ user_id: locals.user.id, action: 'admin_provider_delete', detail: `Deleted provider: ${provName}` });
   return json({ ok: true });
 };

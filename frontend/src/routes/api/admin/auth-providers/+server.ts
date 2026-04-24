@@ -3,6 +3,7 @@ import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { authProviders } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
+import { logActivity } from '$lib/server/activity';
 
 export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') return json({ error: 'Forbidden' }, { status: 403 });
@@ -33,5 +34,6 @@ export const POST: RequestHandler = async ({ request, locals }) => {
     status: status || 'active',
     priority: priority ?? ((maxPriority?.max || 0) + 1),
   }).returning().get();
+  logActivity({ user_id: locals.user.id, action: 'admin_provider_create', detail: `Added ${type} provider: ${name}` });
   return json({ provider: result });
 };

@@ -4,6 +4,7 @@ import { db } from '$lib/server/db';
 import { apps, appRoles, appUsage, activityLog, favorites } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
 import { sanitizeText, sanitizeUrl } from '$lib/server/sanitize';
+import { logActivity } from '$lib/server/activity';
 
 export const PUT: RequestHandler = async ({ params, request, locals }) => {
   if (!locals.user || locals.user.role !== 'super_admin') {
@@ -33,6 +34,7 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
     db.insert(appRoles).values({ app_id: id, ldap_group: group }).run();
   }
 
+  logActivity({ user_id: locals.user.id, action: 'admin_app_update', detail: `Updated app #${id}: ${sanitizeText(body.name)}`, app_id: id });
   return json({ ok: true });
 };
 
@@ -43,6 +45,10 @@ export const DELETE: RequestHandler = async ({ params, locals }) => {
 
   const id = parseInt(params.id);
 
+  // Get app name before deleting for audit log
+  const app = db.select().from(apps).where(eq(apps.id, id)).get();
+  const appName = app?.name || `#${id}`;
+
   // Delete all related records first (foreign key references)
   db.delete(appRoles).where(eq(appRoles.app_id, id)).run();
   db.delete(favorites).where(eq(favorites.app_id, id)).run();
@@ -50,5 +56,6 @@ export const DELETE: RequestHandler = async ({ params, locals }) => {
   db.delete(activityLog).where(eq(activityLog.app_id, id)).run();
   db.delete(apps).where(eq(apps.id, id)).run();
 
+  logActivity({ user_id: locals.user.id, action: 'admin_app_delete', detail: `Deleted app: ${appName}` });
   return json({ ok: true });
 };
