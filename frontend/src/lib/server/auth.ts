@@ -1,8 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { randomBytes } from 'crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import { join } from 'path';
 import type { Cookies } from '@sveltejs/kit';
 
 // Auto-generate JWT secret if not set in .env
@@ -15,9 +14,12 @@ function getJwtSecret(): Uint8Array {
   }
 
   // 2. Use persisted secret if exists
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const secretPath = join(__dirname, '..', '..', '..', 'data', '.jwt_secret');
+  // In Docker: cwd = /app, data at /app/frontend/data/
+  // In dev: cwd = /path/to/City-GPT-SuperApp/frontend, data at ./data/
+  const dataDir = existsSync(join(process.cwd(), 'frontend', 'data'))
+    ? join(process.cwd(), 'frontend', 'data')
+    : join(process.cwd(), 'data');
+  const secretPath = join(dataDir, '.jwt_secret');
 
   try {
     if (existsSync(secretPath)) {
@@ -29,8 +31,9 @@ function getJwtSecret(): Uint8Array {
   // 3. Generate new secret and persist it
   const newSecret = randomBytes(32).toString('hex');
   try {
-    mkdirSync(join(__dirname, '..', '..', '..', 'data'), { recursive: true });
+    mkdirSync(dataDir, { recursive: true });
     writeFileSync(secretPath, newSecret, { mode: 0o600 });
+    console.log('[AUTH] JWT secret auto-generated and saved to', secretPath);
   } catch {}
 
   return new TextEncoder().encode(newSecret);
