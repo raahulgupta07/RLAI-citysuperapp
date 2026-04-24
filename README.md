@@ -30,7 +30,7 @@ Unified AI agent launcher portal. One login, all your AI apps in one place.
 | OIDC protection | CSRF state parameter + PKCE (S256 code challenge) on all SSO flows |
 | Security headers | CSP, X-Frame-Options (SAMEORIGIN), X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, Permissions-Policy, HSTS (production) |
 | Session invalidation | Token blacklisted on logout; expired entries cleaned automatically |
-| CORS protection | Cross-origin mutating API requests (POST/PUT/DELETE) rejected by server hook |
+| CORS protection | Cross-origin mutating API requests (POST/PUT/DELETE) rejected by server hook. Works correctly inside Docker containers (origin/host mismatch handled). |
 | Input sanitization | HTML/script injection stripped from all text inputs; URLs restricted to http/https |
 | Cookies | HttpOnly, SameSite=Lax, Secure in production |
 | JWT secret | Auto-generated 64-char random secret, persisted to `data/.jwt_secret`. Never hardcoded. |
@@ -114,9 +114,12 @@ User picks auth method: LOCAL / LDAP / SSO
   +-- LOCAL --> bcrypt password check against DB
   |
   +-- LDAP --> Loop active providers (priority order)
+  |             -> Connect with 15-second timeout (prevents hung logins)
   |             -> Bind with Application DN (service account) or direct user bind
-  |             -> Search for user, extract groups/email/display name
+  |             -> Search for user (wildcard * and {username} in filter auto-replaced)
+  |             -> DN fallback for ldapjs version compatibility
   |             -> Re-bind as user to verify password (if service account was used)
+  |             -> Extract groups/email/display name
   |
   +-- SSO ----> Redirect to provider (Keycloak/Google/Microsoft)
                 -> OIDC authorization code flow with PKCE + CSRF state
@@ -162,7 +165,7 @@ LDAP is configured entirely from the admin panel (Settings > AUTH > + ADD PROVID
 | Application DN | Service account bind DN (e.g. `CN=svc-app,OU=Service,DC=company,DC=com`) |
 | Application DN Password | Service account password |
 | Search Base | Where to search for users (e.g. `OU=Users,DC=company,DC=com`) |
-| Search Filter | LDAP filter (default: `(sAMAccountName={username})`) |
+| Search Filter | LDAP filter. Supports `{username}` placeholder (e.g. `(sAMAccountName={username})`). Also auto-replaces a bare wildcard `*` with the actual username on login, so Open WebUI-style filters like `(&(objectClass=user)(sAMAccountName=*))` work out of the box. |
 | Username Attribute | Attribute for username matching (default: `sAMAccountName`) |
 | Mail Attribute | Attribute for email (default: `mail`) |
 | Group Attribute | Attribute for group membership (default: `memberOf`) |
@@ -361,7 +364,8 @@ apps.yourdomain.com {
 | Rate limited | Wait 15 minutes or restart the container to clear in-memory state |
 | Forgot password | Settings > USERS > RESET PWD (requires another admin) |
 | Port in use | Change `"3000:3000"` to `"8080:3000"` in docker-compose.yml |
-| LDAP not connecting | Settings > AUTH > TEST button; check host, port, and Application DN |
+| LDAP not connecting | Settings > AUTH > TEST button; check host, port, and Application DN. Connections time out after 15 seconds. |
+| LDAP filter not matching | The search filter auto-replaces `*` with the actual username, so Open WebUI-style filters like `(&(objectClass=user)(sAMAccountName=*))` work as-is. You can also use `{username}` as a placeholder. |
 | SSO redirect fails | Verify Client ID, Client Secret, and callback URL matches `{your-origin}/api/auth/oidc/callback` |
 | Apps not showing | Check app status is ACTIVE and user's LDAP group matches app_roles |
 | Embed not working | Target app must allow iframing (its X-Frame-Options header) |

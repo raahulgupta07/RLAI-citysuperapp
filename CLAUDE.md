@@ -112,11 +112,18 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch. Auth
 - Group Attribute
 - TLS toggle (on/off)
 
+### LDAP Search Filter Handling
+- If the filter contains `*` (wildcard), it is auto-replaced with the actual username at login time (so Open WebUI-style filters like `(&(objectClass=user)(sAMAccountName=*))` work correctly)
+- Supports `{username}` placeholder in filter (replaced with actual username)
+- If neither `*` nor `{username}` is present, the filter is auto-wrapped to include the username attribute match
+
 ### LDAP Bind Flow
-1. Bind with Application DN + Application DN Password (service account)
-2. Search for user by username using Search Base + Search Filter
-3. Re-bind with found user's DN + user-entered password
-4. Extract attributes (mail, groups) from search result
+1. Bind with Application DN + Application DN Password (service account) — 15-second connection timeout prevents hung logins
+2. Search for user by username using Search Base + Search Filter (filter placeholders resolved as above)
+3. Only the first search result is used (duplicates are ignored)
+4. DN fallback: if entry.objectName is empty (ldapjs version compatibility), DN is constructed from usernameAttr + Search Base
+5. Re-bind with resolved user DN + user-entered password
+6. Extract attributes (mail, groups) from search result
 
 ### SSO / OIDC Flow
 - Supports Keycloak, Google, Microsoft providers
@@ -168,7 +175,7 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch. Auth
 
 ### CORS
 - Cross-origin mutating API requests (POST/PUT/DELETE) rejected
-- Origin checked against request host
+- Origin compared against the Host header (not url.origin) to work correctly inside Docker containers
 
 ### Input Sanitization
 - XSS sanitization on app name, description, URL fields
