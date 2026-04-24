@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { invalidateAll } from '$app/navigation';
   import IconPicker from '$lib/IconPicker.svelte';
 
   let { data } = $props();
@@ -172,7 +173,7 @@
       if (res.ok) {
         showModal = false;
         showToast(editingApp ? 'App updated' : 'App created');
-        window.location.reload();
+        invalidateAll();
       }
     } catch {}
     formSaving = false;
@@ -185,7 +186,7 @@
       if (res.ok) {
         showDeleteModal = false;
         showToast('App deleted');
-        window.location.reload();
+        invalidateAll();
       }
     } catch {}
   }
@@ -196,12 +197,12 @@
     const method = editingCat ? 'PUT' : 'POST';
     await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: catName }) });
     showCatModal = false;
-    window.location.reload();
+    invalidateAll();
   }
 
   async function deleteCat(id: number) {
     await fetch(`/api/admin/categories/${id}`, { method: 'DELETE' });
-    window.location.reload();
+    invalidateAll();
   }
 
   async function toggleRole(userId: number, currentRole: string) {
@@ -211,7 +212,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ role: newRole }),
     });
-    window.location.reload();
+    invalidateAll();
   }
 
   async function toggleAppStatus(app: any) {
@@ -222,7 +223,7 @@
       body: JSON.stringify({ ...app, status: newStatus, roles: app.roles }),
     });
     showToast(`${app.name} ${newStatus === 'active' ? 'activated' : 'deactivated'}`);
-    window.location.reload();
+    invalidateAll();
   }
 
   async function changeUserRole(userId: number, newRole: string) {
@@ -232,7 +233,7 @@
       body: JSON.stringify({ role: newRole }),
     });
     showToast(`User role updated to ${newRole}`);
-    window.location.reload();
+    invalidateAll();
   }
 
   async function toggleUserStatus(userId: number, currentStatus: string) {
@@ -243,7 +244,7 @@
       body: JSON.stringify({ status: newStatus }),
     });
     showToast(`User ${newStatus === 'active' ? 'enabled' : 'disabled'}`);
-    window.location.reload();
+    invalidateAll();
   }
 
   function openPasswordModal(userId: number, username: string) {
