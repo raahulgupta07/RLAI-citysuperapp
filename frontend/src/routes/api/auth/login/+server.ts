@@ -90,6 +90,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     }
     // Also allow super admin via LDAP tab as fallback
     if (!authenticated && username === SUPER_ADMIN_USER && password === SUPER_ADMIN_PASS) {
+      const saUser = db.select().from(users).where(eq(users.username, username)).get();
+      if (saUser && (saUser as any).status === 'disabled') {
+        return json({ error: 'Account disabled. Contact your administrator.' }, { status: 403 });
+      }
       authenticated = true;
       role = 'super_admin';
       display_name = 'Super Admin';
@@ -102,6 +106,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
   } else if (authMethod === 'local') {
     // Local only: check super admin creds
     if (username === SUPER_ADMIN_USER && password === SUPER_ADMIN_PASS) {
+      const saUser = db.select().from(users).where(eq(users.username, username)).get();
+      if (saUser && (saUser as any).status === 'disabled') {
+        return json({ error: 'Account disabled. Contact your administrator.' }, { status: 403 });
+      }
       authenticated = true;
       role = 'super_admin';
       display_name = 'Super Admin';
@@ -155,6 +163,10 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     }
 
     if (!authenticated && username === SUPER_ADMIN_USER && password === SUPER_ADMIN_PASS) {
+      const saUser = db.select().from(users).where(eq(users.username, username)).get();
+      if (saUser && (saUser as any).status === 'disabled') {
+        return json({ error: 'Account disabled. Contact your administrator.' }, { status: 403 });
+      }
       authenticated = true;
       role = 'super_admin';
       display_name = 'Super Admin';
@@ -218,6 +230,11 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     // Keep existing role if already set
     if (user.role === 'super_admin') role = 'super_admin';
     else role = user.role || role;
+  }
+
+  // Block disabled users
+  if (user && (user as any).status === 'disabled') {
+    return json({ error: 'Account disabled. Contact your administrator.' }, { status: 403 });
   }
 
   // Sign JWT

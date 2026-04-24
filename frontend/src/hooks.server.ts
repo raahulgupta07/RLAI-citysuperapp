@@ -1,8 +1,20 @@
 import type { Handle } from '@sveltejs/kit';
 import { getUserFromCookies, IS_PRODUCTION } from '$lib/server/auth';
 import { isTokenBlacklisted } from '$lib/server/session';
+import { db } from '$lib/server/db';
+import { users } from '$lib/server/schema';
+import { eq } from 'drizzle-orm';
 
 export const handle: Handle = async ({ event, resolve }) => {
+  // CORS protection: reject cross-origin mutating API requests
+  if (event.url.pathname.startsWith('/api/') && ['POST', 'PUT', 'DELETE', 'PATCH'].includes(event.request.method)) {
+    const origin = event.request.headers.get('origin');
+    const host = event.url.origin;
+    if (origin && origin !== host) {
+      return new Response('Forbidden', { status: 403 });
+    }
+  }
+
   const user = await getUserFromCookies(event.cookies);
 
   // Check if token has been invalidated (logout)
@@ -12,7 +24,14 @@ export const handle: Handle = async ({ event, resolve }) => {
       event.locals.user = null;
       event.cookies.delete('superapp_token', { path: '/' });
     } else {
-      event.locals.user = user;
+      // Verify user is still active in DB
+      const dbUser = db.select().from(users).where(eq(users.username, (user as any).username)).get();
+      if (dbUser && (dbUser as any).status === 'disabled') {
+        event.locals.user = null;
+        event.cookies.delete('superapp_token', { path: '/' });
+      } else {
+        event.locals.user = user;
+      }
     }
   } else {
     event.locals.user = null;

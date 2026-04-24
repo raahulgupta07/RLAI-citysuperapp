@@ -33,8 +33,10 @@ export const load: PageServerLoad = async ({ locals }) => {
     role: users.role,
     auth_source: users.auth_source,
     status: users.status,
+    ldap_groups: users.ldap_groups,
     last_login: users.last_login,
     created_at: users.created_at,
+    is_active: users.is_active,
   }).from(users).orderBy(desc(users.last_login)).all();
 
   const allRoles = db.select().from(appRoles).all();
