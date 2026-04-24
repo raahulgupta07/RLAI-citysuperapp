@@ -117,11 +117,13 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 - Sort order control
 
 ### USERS — User management
+- **+ CREATE USER** — create local users with username, display name, email, password, role
 - View all users with auth source, role, status, login count, first/last login
 - Change role via dropdown (super_admin/admin/user/viewer)
 - Enable/disable users
 - Reset password (for local users only) — proper modal, not browser prompt
 - Search + filter by role/auth/status
+- API: POST /api/admin/users (create), PUT .../role, PUT .../status, PUT .../password
 
 ### LOGS — Activity audit trail
 - All user actions: login, logout, app_launch

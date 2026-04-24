@@ -343,7 +343,7 @@ docker compose up -d
 |-----|----------------|
 | **APPS** | Add/edit/delete/disable apps, emoji icons, categories, redirect/embed mode, LDAP group access |
 | **CATEGORIES** | Create/edit/delete app categories |
-| **USERS** | Change roles (super_admin/admin/user/viewer), enable/disable, reset passwords, view login count + first/last login |
+| **USERS** | Create local users, change roles (super_admin/admin/user/viewer), enable/disable, reset passwords, view login count + first/last login |
 | **LOGS** | Full audit trail: login, logout, app_launch with timestamp, user, IP, detail. Search + filter. |
 | **ANALYTICS** | 35+ insights: key metrics, active users, trends, top/least apps, peak hours, per-user stats, system health |
 | **AUTH** | Add/edit/delete LDAP servers + Keycloak instances. Test connection. Enable/disable. Priority ordering. |
