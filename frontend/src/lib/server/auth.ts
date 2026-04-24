@@ -88,71 +88,125 @@ export async function getUserFromCookies(cookies: Cookies): Promise<JwtPayload |
   return verifyJwt(token);
 }
 
+export interface LdapConfig {
+  host: string;
+  port?: string;
+  app_dn?: string;
+  app_dn_password?: string;
+  mail_attr?: string;
+  username_attr?: string;
+  search_base?: string;
+  search_filter?: string;
+  group_attr?: string;
+  tls?: boolean;
+}
+
 export async function authenticateLdap(
   username: string,
   password: string,
-  ldapUrl?: string,
-  bindDn?: string,
-  searchBase?: string
+  config: LdapConfig
 ): Promise<{ success: boolean; groups: string[]; display_name: string; email: string }> {
-  const LDAP_URL = ldapUrl || process.env.LDAP_URL;
-
-  if (!LDAP_URL) {
-    // No LDAP configured — fallback to local auth
+  if (!config.host) {
     return { success: false, groups: [], display_name: '', email: '' };
   }
 
+  const protocol = config.tls ? 'ldaps' : 'ldap';
+  const port = config.port || (config.tls ? '636' : '389');
+  const ldapUrl = `${protocol}://${config.host}:${port}`;
+  const mailAttr = config.mail_attr || 'mail';
+  const usernameAttr = config.username_attr || 'sAMAccountName';
+  const searchBase = config.search_base || '';
+  const searchFilter = (config.search_filter || `(${usernameAttr}={username})`).replace('{username}', username);
+  const groupAttr = config.group_attr || 'memberOf';
+
   try {
-    // Dynamic import to avoid issues when ldapjs is not installed
     const ldap = await import('ldapjs');
-    const client = ldap.createClient({ url: LDAP_URL });
-    const BIND_DN = bindDn || process.env.LDAP_BIND_DN || `uid=${username},ou=users,dc=example,dc=com`;
-    const SEARCH_BASE = searchBase || process.env.LDAP_SEARCH_BASE || 'ou=users,dc=example,dc=com';
+    const clientOpts: any = { url: ldapUrl, connectTimeout: 10000 };
+    if (config.tls) {
+      clientOpts.tlsOptions = { rejectUnauthorized: false };
+    }
+    const client = ldap.createClient(clientOpts);
 
     return new Promise((resolve) => {
-      const bindDn = BIND_DN.replace('{username}', username);
+      const fail = () => {
+        try { client.unbind(); } catch {}
+        resolve({ success: false, groups: [], display_name: '', email: '' });
+      };
 
-      client.bind(bindDn, password, (err: any) => {
-        if (err) {
-          client.unbind();
-          resolve({ success: false, groups: [], display_name: '', email: '' });
-          return;
-        }
+      client.on('error', () => fail());
 
-        // Search for user details
-        client.search(SEARCH_BASE, {
-          filter: `(uid=${username})`,
+      // Step 1: Bind with service account (Application DN) or directly as user
+      const bindDn = config.app_dn || '';
+      const bindPassword = config.app_dn_password || '';
+      const useServiceAccount = !!(bindDn && bindPassword);
+
+      const initialBindDn = useServiceAccount ? bindDn : `${usernameAttr}=${username},${searchBase}`;
+      const initialBindPassword = useServiceAccount ? bindPassword : password;
+
+      client.bind(initialBindDn, initialBindPassword, (bindErr: any) => {
+        if (bindErr) { fail(); return; }
+
+        // Step 2: Search for the user
+        const searchAttrs = ['cn', 'displayName', mailAttr, groupAttr];
+        if (usernameAttr !== 'cn' && usernameAttr !== mailAttr) searchAttrs.push(usernameAttr);
+
+        client.search(searchBase, {
+          filter: searchFilter,
           scope: 'sub',
-          attributes: ['cn', 'mail', 'memberOf'],
+          attributes: searchAttrs,
         }, (searchErr: any, res: any) => {
-          let display_name = username;
-          let email = '';
-          let groups: string[] = [];
-
           if (searchErr) {
-            client.unbind();
-            resolve({ success: true, groups: ['all'], display_name, email });
+            try { client.unbind(); } catch {}
+            resolve({ success: !useServiceAccount, groups: ['all'], display_name: username, email: '' });
             return;
           }
 
+          let display_name = username;
+          let email = '';
+          let groups: string[] = [];
+          let userDn = '';
+
           res.on('searchEntry', (entry: any) => {
+            userDn = entry.objectName || entry.dn?.toString() || '';
             const attrs = entry.ppiAttributes || entry.attributes || [];
             for (const attr of attrs) {
-              if (attr.type === 'cn') display_name = attr.values?.[0] || username;
-              if (attr.type === 'mail') email = attr.values?.[0] || '';
-              if (attr.type === 'memberOf') groups = attr.values || [];
+              if (attr.type === 'displayName') display_name = attr.values?.[0] || display_name;
+              else if (attr.type === 'cn' && display_name === username) display_name = attr.values?.[0] || username;
+              if (attr.type === mailAttr) email = attr.values?.[0] || '';
+              if (attr.type === groupAttr) groups = attr.values || [];
             }
           });
 
           res.on('end', () => {
-            client.unbind();
-            if (groups.length === 0) groups = ['all'];
-            resolve({ success: true, groups, display_name, email });
+            if (!useServiceAccount) {
+              // Already authenticated via direct bind
+              if (groups.length === 0) groups = ['all'];
+              try { client.unbind(); } catch {}
+              resolve({ success: true, groups, display_name, email });
+              return;
+            }
+
+            // Step 3: If using service account, verify user password by re-binding as user
+            if (!userDn) {
+              try { client.unbind(); } catch {}
+              resolve({ success: false, groups: [], display_name: '', email: '' });
+              return;
+            }
+
+            client.bind(userDn, password, (userBindErr: any) => {
+              try { client.unbind(); } catch {}
+              if (userBindErr) {
+                resolve({ success: false, groups: [], display_name: '', email: '' });
+                return;
+              }
+              if (groups.length === 0) groups = ['all'];
+              resolve({ success: true, groups, display_name, email });
+            });
           });
 
           res.on('error', () => {
-            client.unbind();
-            resolve({ success: true, groups: ['all'], display_name, email });
+            try { client.unbind(); } catch {}
+            resolve({ success: !useServiceAccount, groups: ['all'], display_name, email });
           });
         });
       });

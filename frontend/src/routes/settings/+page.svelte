@@ -14,6 +14,7 @@
       activeTab = tab;
     }
     loadAuthProviders();
+    loadAuthSettings();
   });
   let showModal = $state(false);
   let editingApp = $state<any>(null);
@@ -28,6 +29,11 @@
   let passwordUsername = $state('');
   let newPassword = $state('');
 
+  // Auth method toggles
+  let authLocalEnabled = $state(true);
+  let authLdapEnabled = $state(false);
+  let authSsoEnabled = $state(false);
+
   // Auth providers
   let authProviders = $state<any[]>([]);
   let showAuthModal = $state(false);
@@ -36,16 +42,28 @@
   let providerName = $state('');
   let providerStatus = $state('active');
   // LDAP fields
-  let ldapUrl = $state('');
-  let ldapBindDn = $state('');
+  let ldapHost = $state('');
+  let ldapPort = $state('389');
+  let ldapAppDn = $state('');
+  let ldapAppDnPassword = $state('');
+  let ldapMailAttr = $state('mail');
+  let ldapUsernameAttr = $state('sAMAccountName');
   let ldapSearchBase = $state('');
-  let ldapSearchFilter = $state('(uid={username})');
+  let ldapSearchFilter = $state('(&(objectClass=user)(sAMAccountName={username}))');
   let ldapGroupAttr = $state('memberOf');
+  let ldapTls = $state(false);
   // Keycloak fields
   let kcUrl = $state('');
   let kcRealm = $state('master');
   let kcClientId = $state('');
   let kcClientSecret = $state('');
+  // Google fields
+  let googleClientId = $state('');
+  let googleClientSecret = $state('');
+  // Microsoft fields
+  let msClientId = $state('');
+  let msClientSecret = $state('');
+  let msTenantId = $state('common');
   let testResult = $state('');
   let testLoading = $state(false);
 
@@ -327,11 +345,37 @@
     } catch {}
   }
 
+  async function loadAuthSettings() {
+    try {
+      const res = await fetch('/api/admin/auth-settings');
+      if (res.ok) {
+        const d = await res.json();
+        authLocalEnabled = d.auth_local_enabled !== false;
+        authLdapEnabled = d.auth_ldap_enabled !== false;
+        authSsoEnabled = d.auth_sso_enabled !== false;
+      }
+    } catch {}
+  }
+
+  async function toggleAuthSetting(key: string, value: boolean) {
+    await fetch('/api/admin/auth-settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [key]: value }),
+    });
+    showToast(`${key.replace('auth_', '').replace('_enabled', '').toUpperCase()} ${value ? 'enabled' : 'disabled'}`);
+  }
+
   function openAddProvider() {
     editingProvider = null;
     providerType = 'ldap'; providerName = ''; providerStatus = 'active';
-    ldapUrl = ''; ldapBindDn = ''; ldapSearchBase = ''; ldapSearchFilter = '(uid={username})'; ldapGroupAttr = 'memberOf';
+    ldapHost = ''; ldapPort = '389'; ldapAppDn = ''; ldapAppDnPassword = '';
+    ldapMailAttr = 'mail'; ldapUsernameAttr = 'sAMAccountName';
+    ldapSearchBase = ''; ldapSearchFilter = '(&(objectClass=user)(sAMAccountName={username}))';
+    ldapGroupAttr = 'memberOf'; ldapTls = false;
     kcUrl = ''; kcRealm = 'master'; kcClientId = ''; kcClientSecret = '';
+    googleClientId = ''; googleClientSecret = '';
+    msClientId = ''; msClientSecret = ''; msTenantId = 'common';
     testResult = '';
     showAuthModal = true;
   }
@@ -341,10 +385,18 @@
     providerType = p.type; providerName = p.name; providerStatus = p.status;
     const c = p.config || {};
     if (p.type === 'ldap') {
-      ldapUrl = c.url || ''; ldapBindDn = c.bind_dn || ''; ldapSearchBase = c.search_base || '';
-      ldapSearchFilter = c.search_filter || '(uid={username})'; ldapGroupAttr = c.group_attr || 'memberOf';
+      ldapHost = c.host || ''; ldapPort = c.port || '389';
+      ldapAppDn = c.app_dn || ''; ldapAppDnPassword = c.app_dn_password || '';
+      ldapMailAttr = c.mail_attr || 'mail'; ldapUsernameAttr = c.username_attr || 'sAMAccountName';
+      ldapSearchBase = c.search_base || '';
+      ldapSearchFilter = c.search_filter || '(&(objectClass=user)(sAMAccountName={username}))';
+      ldapGroupAttr = c.group_attr || 'memberOf'; ldapTls = c.tls || false;
     } else if (p.type === 'keycloak') {
       kcUrl = c.url || ''; kcRealm = c.realm || 'master'; kcClientId = c.client_id || ''; kcClientSecret = c.client_secret || '';
+    } else if (p.type === 'google') {
+      googleClientId = c.client_id || ''; googleClientSecret = c.client_secret || '';
+    } else if (p.type === 'microsoft') {
+      msClientId = c.client_id || ''; msClientSecret = c.client_secret || ''; msTenantId = c.tenant_id || 'common';
     }
     testResult = '';
     showAuthModal = true;
@@ -352,9 +404,13 @@
 
   async function saveProvider() {
     const config = providerType === 'ldap'
-      ? { url: ldapUrl, bind_dn: ldapBindDn, search_base: ldapSearchBase, search_filter: ldapSearchFilter, group_attr: ldapGroupAttr }
+      ? { host: ldapHost, port: ldapPort, app_dn: ldapAppDn, app_dn_password: ldapAppDnPassword, mail_attr: ldapMailAttr, username_attr: ldapUsernameAttr, search_base: ldapSearchBase, search_filter: ldapSearchFilter, group_attr: ldapGroupAttr, tls: ldapTls }
       : providerType === 'keycloak'
       ? { url: kcUrl, realm: kcRealm, client_id: kcClientId, client_secret: kcClientSecret }
+      : providerType === 'google'
+      ? { client_id: googleClientId, client_secret: googleClientSecret }
+      : providerType === 'microsoft'
+      ? { client_id: msClientId, client_secret: msClientSecret, tenant_id: msTenantId }
       : {};
     const body = { name: providerName, type: providerType, config, status: providerStatus };
     const url = editingProvider ? `/api/admin/auth-providers/${editingProvider.id}` : '/api/admin/auth-providers';
@@ -990,6 +1046,38 @@
 
     <!-- AUTH TAB -->
     {:else if activeTab === 'AUTH'}
+
+      <!-- Auth Method Toggles -->
+      <div class="dark-title-bar" style="margin-bottom: 8px;">
+        <span>AUTH METHODS</span>
+      </div>
+      <div style="display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;">
+        <label class="ink-border stamp-shadow" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; cursor: pointer; font-size: 11px; font-weight: 700; min-width: 140px;"
+          style:background={authLocalEnabled ? '#e8f5e9' : '#ffeaea'}>
+          <input type="checkbox" bind:checked={authLocalEnabled} onchange={() => toggleAuthSetting('auth_local_enabled', authLocalEnabled)} />
+          LOCAL
+          <span class="tag-label" class:tag-label-green={authLocalEnabled} class:tag-label-error={!authLocalEnabled} style="margin-left: auto;">
+            {authLocalEnabled ? 'ON' : 'OFF'}
+          </span>
+        </label>
+        <label class="ink-border stamp-shadow" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; cursor: pointer; font-size: 11px; font-weight: 700; min-width: 140px;"
+          style:background={authLdapEnabled ? '#e8f5e9' : '#ffeaea'}>
+          <input type="checkbox" bind:checked={authLdapEnabled} onchange={() => toggleAuthSetting('auth_ldap_enabled', authLdapEnabled)} />
+          LDAP
+          <span class="tag-label" class:tag-label-green={authLdapEnabled} class:tag-label-error={!authLdapEnabled} style="margin-left: auto;">
+            {authLdapEnabled ? 'ON' : 'OFF'}
+          </span>
+        </label>
+        <label class="ink-border stamp-shadow" style="display: flex; align-items: center; gap: 8px; padding: 10px 16px; cursor: pointer; font-size: 11px; font-weight: 700; min-width: 140px;"
+          style:background={authSsoEnabled ? '#e8f5e9' : '#ffeaea'}>
+          <input type="checkbox" bind:checked={authSsoEnabled} onchange={() => toggleAuthSetting('auth_sso_enabled', authSsoEnabled)} />
+          SSO
+          <span class="tag-label" class:tag-label-green={authSsoEnabled} class:tag-label-error={!authSsoEnabled} style="margin-left: auto;">
+            {authSsoEnabled ? 'ON' : 'OFF'}
+          </span>
+        </label>
+      </div>
+
       <div class="dark-title-bar" style="margin-bottom: 12px;">
         <span>AUTH PROVIDERS ({authProviders.length})</span>
         <button class="btn-green" onclick={openAddProvider}>+ ADD PROVIDER</button>
@@ -1015,13 +1103,16 @@
                 <span class="tag-label"
                   class:tag-label-green={p.type === 'local'}
                   class:tag-label-secondary={p.type === 'keycloak'}
-                  class:tag-label-warning={p.type === 'ldap'}>
+                  class:tag-label-warning={p.type === 'ldap'}
+                  style={p.type === 'google' ? 'background: #4285f4; color: white;' : p.type === 'microsoft' ? 'background: #00a4ef; color: white;' : ''}>
                   {p.type.toUpperCase()}
                 </span>
               </td>
               <td style="font-size: 10px; color: var(--color-on-surface-dim);">
-                {#if p.type === 'ldap'}{p.config?.url || '\u2014'}
+                {#if p.type === 'ldap'}{p.config?.host || '\u2014'}:{p.config?.port || '389'}
                 {:else if p.type === 'keycloak'}{p.config?.url || '\u2014'} / {p.config?.realm || 'master'}
+                {:else if p.type === 'google'}accounts.google.com
+                {:else if p.type === 'microsoft'}{p.config?.tenant_id || 'common'}.microsoft.com
                 {:else}(built-in){/if}
               </td>
               <td>
@@ -1215,12 +1306,18 @@
           {#if !editingProvider}
             <div>
               <label class="form-label">PROVIDER TYPE</label>
-              <div style="display: flex; gap: 12px; margin-top: 4px;">
+              <div style="display: flex; gap: 12px; margin-top: 4px; flex-wrap: wrap;">
                 <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
                   <input type="radio" bind:group={providerType} value="ldap" /> LDAP
                 </label>
                 <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
                   <input type="radio" bind:group={providerType} value="keycloak" /> KEYCLOAK
+                </label>
+                <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
+                  <input type="radio" bind:group={providerType} value="google" /> GOOGLE
+                </label>
+                <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
+                  <input type="radio" bind:group={providerType} value="microsoft" /> MICROSOFT
                 </label>
               </div>
             </div>
@@ -1228,29 +1325,55 @@
 
           <div>
             <label class="form-label">NAME *</label>
-            <input class="form-input" bind:value={providerName} placeholder={providerType === 'ldap' ? 'Corp LDAP' : 'Corp SSO'} />
+            <input class="form-input" bind:value={providerName} placeholder={providerType === 'ldap' ? 'Corp LDAP' : providerType === 'google' ? 'Google Workspace' : providerType === 'microsoft' ? 'Microsoft Entra' : 'Corp SSO'} />
           </div>
 
           {#if providerType === 'ldap'}
-            <div>
-              <label class="form-label">LDAP URL *</label>
-              <input class="form-input" bind:value={ldapUrl} placeholder="ldap://10.0.1.5:389" />
+            <div style="display: flex; gap: 10px;">
+              <div style="flex: 1;">
+                <label class="form-label">HOST *</label>
+                <input class="form-input" bind:value={ldapHost} placeholder="10.16.73.150" />
+              </div>
+              <div style="width: 80px;">
+                <label class="form-label">PORT</label>
+                <input class="form-input" bind:value={ldapPort} placeholder="389" />
+              </div>
             </div>
             <div>
-              <label class="form-label">BIND DN</label>
-              <input class="form-input" bind:value={ldapBindDn} placeholder="uid={'{username}'},ou=users,dc=corp,dc=com" />
+              <label class="form-label">APPLICATION DN</label>
+              <input class="form-input" bind:value={ldapAppDn} placeholder="CN=Administrator,CN=Users,DC=chl,DC=local" />
+            </div>
+            <div>
+              <label class="form-label">APPLICATION DN PASSWORD</label>
+              <input class="form-input" type="password" bind:value={ldapAppDnPassword} placeholder="••••••••" />
+            </div>
+            <div>
+              <label class="form-label">ATTRIBUTE FOR MAIL</label>
+              <input class="form-input" bind:value={ldapMailAttr} placeholder="userPrincipalName" />
+            </div>
+            <div>
+              <label class="form-label">ATTRIBUTE FOR USERNAME</label>
+              <input class="form-input" bind:value={ldapUsernameAttr} placeholder="sAMAccountName" />
             </div>
             <div>
               <label class="form-label">SEARCH BASE</label>
-              <input class="form-input" bind:value={ldapSearchBase} placeholder="ou=users,dc=corp,dc=com" />
+              <input class="form-input" bind:value={ldapSearchBase} placeholder="DC=chl,DC=local" />
             </div>
             <div>
               <label class="form-label">SEARCH FILTER</label>
-              <input class="form-input" bind:value={ldapSearchFilter} placeholder="(uid={'{username}'})" />
+              <input class="form-input" bind:value={ldapSearchFilter} placeholder="(&(objectClass=user)(sAMAccountName={'{username}'}))" />
             </div>
             <div>
               <label class="form-label">GROUP ATTRIBUTE</label>
               <input class="form-input" bind:value={ldapGroupAttr} placeholder="memberOf" />
+            </div>
+            <div>
+              <label class="form-label">TLS</label>
+              <div style="display: flex; gap: 12px; margin-top: 4px;">
+                <label style="display: flex; align-items: center; gap: 4px; font-size: 11px; cursor: pointer;">
+                  <input type="checkbox" bind:checked={ldapTls} /> ENABLE TLS
+                </label>
+              </div>
             </div>
           {:else if providerType === 'keycloak'}
             <div>
@@ -1258,7 +1381,7 @@
               <input class="form-input" bind:value={kcUrl} placeholder="https://sso.company.com" />
             </div>
             <div>
-              <label class="form-label">REALM *</label>
+              <label class="form-label">REALM</label>
               <input class="form-input" bind:value={kcRealm} placeholder="master" />
             </div>
             <div>
@@ -1268,6 +1391,37 @@
             <div>
               <label class="form-label">CLIENT SECRET</label>
               <input class="form-input" type="password" bind:value={kcClientSecret} placeholder="secret" />
+            </div>
+          {:else if providerType === 'google'}
+            <div style="padding: 6px 10px; background: #e3f2fd; font-size: 10px; border-left: 3px solid #4285f4;">
+              Create OAuth 2.0 credentials at <strong>console.cloud.google.com</strong> &gt; APIs &amp; Services &gt; Credentials.
+              Set redirect URI to: <code>/api/auth/oidc/callback</code>
+            </div>
+            <div>
+              <label class="form-label">CLIENT ID *</label>
+              <input class="form-input" bind:value={googleClientId} placeholder="xxxx.apps.googleusercontent.com" />
+            </div>
+            <div>
+              <label class="form-label">CLIENT SECRET *</label>
+              <input class="form-input" type="password" bind:value={googleClientSecret} placeholder="GOCSPX-..." />
+            </div>
+          {:else if providerType === 'microsoft'}
+            <div style="padding: 6px 10px; background: #e3f2fd; font-size: 10px; border-left: 3px solid #00a4ef;">
+              Register app at <strong>portal.azure.com</strong> &gt; App registrations.
+              Set redirect URI to: <code>/api/auth/oidc/callback</code>
+            </div>
+            <div>
+              <label class="form-label">TENANT ID</label>
+              <input class="form-input" bind:value={msTenantId} placeholder="common" />
+              <span style="font-size: 9px; color: var(--color-on-surface-dim);">Use "common" for multi-tenant, or your Azure AD tenant ID</span>
+            </div>
+            <div>
+              <label class="form-label">CLIENT ID *</label>
+              <input class="form-input" bind:value={msClientId} placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+            </div>
+            <div>
+              <label class="form-label">CLIENT SECRET *</label>
+              <input class="form-input" type="password" bind:value={msClientSecret} placeholder="secret" />
             </div>
           {/if}
 
@@ -1288,7 +1442,7 @@
       <div class="modal-footer">
         <button class="btn-ghost" onclick={() => showAuthModal = false}>CANCEL</button>
         <button class="btn-green" onclick={saveProvider}
-          disabled={!providerName || (providerType === 'ldap' && !ldapUrl) || (providerType === 'keycloak' && (!kcUrl || !kcClientId))}>
+          disabled={!providerName || (providerType === 'ldap' && !ldapHost) || (providerType === 'keycloak' && (!kcUrl || !kcClientId)) || (providerType === 'google' && !googleClientId) || (providerType === 'microsoft' && !msClientId)}>
           {editingProvider ? 'UPDATE' : 'SAVE PROVIDER'}
         </button>
       </div>

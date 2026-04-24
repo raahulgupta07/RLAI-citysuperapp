@@ -2,7 +2,7 @@ import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
 import { users, authProviders } from '$lib/server/schema';
-import { signJwt, setAuthCookie, authenticateLdap } from '$lib/server/auth';
+import { signJwt, setAuthCookie, authenticateLdap, type LdapConfig } from '$lib/server/auth';
 import { eq, and } from 'drizzle-orm';
 import { logActivity } from '$lib/server/activity';
 
@@ -62,9 +62,22 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
     for (const provider of ldapProviders) {
       let config: any = {};
       try { config = JSON.parse(provider.config || '{}'); } catch {}
-      if (!config.url) continue;
+      if (!config.host) continue;
 
-      const ldapResult = await authenticateLdap(username, password, config.url, config.bind_dn, config.search_base);
+      const ldapConfig: LdapConfig = {
+        host: config.host,
+        port: config.port,
+        app_dn: config.app_dn,
+        app_dn_password: config.app_dn_password,
+        mail_attr: config.mail_attr,
+        username_attr: config.username_attr,
+        search_base: config.search_base,
+        search_filter: config.search_filter,
+        group_attr: config.group_attr,
+        tls: config.tls,
+      };
+
+      const ldapResult = await authenticateLdap(username, password, ldapConfig);
       if (ldapResult.success) {
         authenticated = true;
         ldap_groups = ldapResult.groups;
@@ -75,8 +88,9 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       }
     }
     // Also fall back to env-based LDAP if no DB providers matched
-    if (!authenticated) {
-      const ldapResult = await authenticateLdap(username, password);
+    if (!authenticated && process.env.LDAP_URL) {
+      const envHost = process.env.LDAP_URL.replace(/^ldaps?:\/\//, '').replace(/:\d+$/, '');
+      const ldapResult = await authenticateLdap(username, password, { host: envHost });
       if (ldapResult.success) {
         authenticated = true;
         ldap_groups = ldapResult.groups;
@@ -123,13 +137,24 @@ export const POST: RequestHandler = async ({ request, cookies }) => {
       return json({ error: 'Invalid credentials' }, { status: 401 });
     }
   } else {
-    // Default: try LDAP first, then fallback to local
-    const ldapResult = await authenticateLdap(username, password);
-    if (ldapResult.success) {
-      authenticated = true;
-      ldap_groups = ldapResult.groups;
-      display_name = ldapResult.display_name || username;
-      email = ldapResult.email;
+    // Default: try LDAP providers first, then fallback to local
+    for (const provider of ldapProviders) {
+      let config: any = {};
+      try { config = JSON.parse(provider.config || '{}'); } catch {}
+      if (!config.host) continue;
+      const ldapResult = await authenticateLdap(username, password, {
+        host: config.host, port: config.port, app_dn: config.app_dn,
+        app_dn_password: config.app_dn_password, mail_attr: config.mail_attr,
+        username_attr: config.username_attr, search_base: config.search_base,
+        search_filter: config.search_filter, group_attr: config.group_attr, tls: config.tls,
+      });
+      if (ldapResult.success) {
+        authenticated = true;
+        ldap_groups = ldapResult.groups;
+        display_name = ldapResult.display_name || username;
+        email = ldapResult.email;
+        break;
+      }
     }
 
     if (!authenticated && username === SUPER_ADMIN_USER && password === SUPER_ADMIN_PASS) {

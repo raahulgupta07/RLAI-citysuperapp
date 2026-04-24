@@ -9,16 +9,21 @@ export const PUT: RequestHandler = async ({ params, request, locals }) => {
   const id = parseInt(params.id);
   const body = await request.json();
 
-  // If config has masked secret, don't overwrite it
+  // If config has masked secrets, preserve existing values
   let configToSave = body.config;
   if (configToSave && typeof configToSave === 'object') {
-    if (configToSave.client_secret === '••••••••') {
-      // Keep existing secret
+    const maskedFields = ['client_secret', 'app_dn_password'];
+    const hasMasked = maskedFields.some(f => configToSave[f] === '••••••••');
+    if (hasMasked) {
       const existing = db.select().from(authProviders).where(eq(authProviders.id, id)).get();
       if (existing) {
         try {
           const existingConfig = JSON.parse(existing.config || '{}');
-          configToSave.client_secret = existingConfig.client_secret;
+          for (const field of maskedFields) {
+            if (configToSave[field] === '••••••••') {
+              configToSave[field] = existingConfig[field];
+            }
+          }
         } catch {}
       }
     }

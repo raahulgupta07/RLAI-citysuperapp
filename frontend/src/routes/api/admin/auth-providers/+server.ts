@@ -11,8 +11,9 @@ export const GET: RequestHandler = async ({ locals }) => {
   const safe = providers.map(p => {
     let config: any = {};
     try { config = JSON.parse(p.config || '{}'); } catch {}
-    // Mask client_secret
+    // Mask secrets
     if (config.client_secret) config.client_secret = '••••••••';
+    if (config.app_dn_password) config.app_dn_password = '••••••••';
     return { ...p, config };
   });
   return json({ providers: safe });

@@ -79,7 +79,7 @@ export const activityLog = sqliteTable('activity_log', {
 export const authProviders = sqliteTable('auth_providers', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
-  type: text('type', { enum: ['ldap', 'keycloak', 'local'] }).notNull(),
+  type: text('type', { enum: ['ldap', 'keycloak', 'google', 'microsoft', 'local'] }).notNull(),
   config: text('config').default('{}'), // JSON: url, bind_dn, search_base, realm, client_id, etc
   status: text('status').default('active'), // active, disabled
   priority: integer('priority').default(0),

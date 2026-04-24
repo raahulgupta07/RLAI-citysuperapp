@@ -89,7 +89,7 @@ export function migrate(sqlite: Database.Database) {
     CREATE TABLE IF NOT EXISTS auth_providers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      type TEXT NOT NULL CHECK(type IN ('ldap','keycloak','local')),
+      type TEXT NOT NULL,
       config TEXT DEFAULT '{}',
       status TEXT DEFAULT 'active',
       priority INTEGER DEFAULT 0,
@@ -120,6 +120,36 @@ export function migrate(sqlite: Database.Database) {
   try { sqlite.exec("ALTER TABLE users ADD COLUMN auth_source TEXT DEFAULT 'local'"); } catch {}
   try { sqlite.exec("ALTER TABLE users ADD COLUMN status TEXT DEFAULT 'active'"); } catch {}
 
+  // Migration: remove CHECK constraint on auth_providers.type to allow google/microsoft
+  // SQLite can't ALTER CHECK, so we recreate the table if the old constraint exists
+  try {
+    const tableInfo = sqlite.prepare("SELECT sql FROM sqlite_master WHERE name='auth_providers'").get() as any;
+    if (tableInfo?.sql && tableInfo.sql.includes("ldap','keycloak','local'")) {
+      console.log('[MIGRATE] Removing CHECK constraint on auth_providers.type...');
+      // Disable foreign keys temporarily for table recreation
+      sqlite.pragma('foreign_keys = OFF');
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS auth_providers_new (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          type TEXT NOT NULL,
+          config TEXT DEFAULT '{}',
+          status TEXT DEFAULT 'active',
+          priority INTEGER DEFAULT 0,
+          created_at TEXT DEFAULT (datetime('now')),
+          updated_at TEXT DEFAULT (datetime('now'))
+        );
+        INSERT INTO auth_providers_new SELECT * FROM auth_providers;
+        DROP TABLE auth_providers;
+        ALTER TABLE auth_providers_new RENAME TO auth_providers;
+      `);
+      sqlite.pragma('foreign_keys = ON');
+      console.log('[MIGRATE] auth_providers CHECK constraint removed successfully');
+    }
+  } catch (e) {
+    console.error('[MIGRATE] Failed to migrate auth_providers:', e);
+  }
+
   // Seed default categories if empty
   const catCount = sqlite.prepare('SELECT COUNT(*) as c FROM categories').get() as any;
   if (catCount.c === 0) {
@@ -142,6 +172,24 @@ export function migrate(sqlite: Database.Database) {
     insertSetting.run('portal_title', 'City AI Hub');
     insertSetting.run('portal_subtitle', 'AI Command Center');
     insertSetting.run('default_theme', 'light');
+  }
+
+  // Seed auth method toggles (INSERT OR IGNORE — only runs on first boot)
+  // Default: only LOCAL enabled, admin turns on LDAP/SSO after configuring providers
+  const insertSetting2 = sqlite.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
+  insertSetting2.run('auth_local_enabled', 'true');
+  insertSetting2.run('auth_ldap_enabled', 'false');
+  insertSetting2.run('auth_sso_enabled', 'false');
+
+  // Migration: if auth toggles were seeded as 'true' from an older version,
+  // set LDAP/SSO to false unless there are active providers configured
+  const ldapCount = sqlite.prepare("SELECT COUNT(*) as c FROM auth_providers WHERE type = 'ldap' AND status = 'active'").get() as any;
+  const ssoCount = sqlite.prepare("SELECT COUNT(*) as c FROM auth_providers WHERE type IN ('keycloak','google','microsoft') AND status = 'active'").get() as any;
+  if (ldapCount.c === 0) {
+    sqlite.prepare("UPDATE settings SET value = 'false' WHERE key = 'auth_ldap_enabled' AND value = 'true'").run();
+  }
+  if (ssoCount.c === 0) {
+    sqlite.prepare("UPDATE settings SET value = 'false' WHERE key = 'auth_sso_enabled' AND value = 'true'").run();
   }
 
   // Seed default auth provider if empty
