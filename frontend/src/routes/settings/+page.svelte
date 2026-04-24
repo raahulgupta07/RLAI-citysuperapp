@@ -214,8 +214,13 @@
         showDeleteModal = false;
         showToast('App deleted');
         invalidateAll();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        showToast(d.error || 'Failed to delete app');
       }
-    } catch {}
+    } catch {
+      showToast('Failed to delete app');
+    }
   }
 
   async function saveCat() {

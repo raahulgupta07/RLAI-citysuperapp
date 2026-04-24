@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { db } from '$lib/server/db';
-import { apps, appRoles } from '$lib/server/schema';
+import { apps, appRoles, appUsage, activityLog, favorites } from '$lib/server/schema';
 import { eq } from 'drizzle-orm';
 
 export const PUT: RequestHandler = async ({ params, request, locals }) => {
@@ -41,7 +41,12 @@ export const DELETE: RequestHandler = async ({ params, locals }) => {
   }
 
   const id = parseInt(params.id);
+
+  // Delete all related records first (foreign key references)
   db.delete(appRoles).where(eq(appRoles.app_id, id)).run();
+  db.delete(favorites).where(eq(favorites.app_id, id)).run();
+  db.delete(appUsage).where(eq(appUsage.app_id, id)).run();
+  db.delete(activityLog).where(eq(activityLog.app_id, id)).run();
   db.delete(apps).where(eq(apps.id, id)).run();
 
   return json({ ok: true });
