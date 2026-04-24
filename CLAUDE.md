@@ -27,7 +27,7 @@ City-GPT-SuperApp/
 │   │   │   │   ├── auth.ts         ← JWT (jose) + LDAP bind + cookie helpers
 │   │   │   │   ├── migrate.ts      ← Auto-migration + seed on startup
 │   │   │   │   └── activity.ts     ← Activity logging helper
-│   │   │   ├── AppCard.svelte      ← Reusable app card (emoji icons, launch/embed)
+│   │   │   ├── AppCard.svelte      ← App card (icon, domain, description, info popup, launch/embed)
 │   │   │   ├── IconPicker.svelte   ← Emoji icon picker (80+ icons, searchable)
 │   │   │   └── index.ts
 │   │   └── routes/
@@ -155,7 +155,11 @@ Auto-migrated on startup. New columns added via ALTER TABLE with try/catch.
 - Register option for local auth
 
 ## Home Page
-- Card grid with app cards (emoji icon, name, description, launch mode tag)
+- Card grid with app cards:
+  - 32px emoji icon, app name, domain URL, category label
+  - 2-line truncated description with (i) info button for full details popup
+  - Color accent left border (card_color), REDIRECT/EMBED tag
+  - LAUNCH/OPEN button + favorite star toggle
 - Category tabs (ALL + per-category + FAVORITES)
 - Search bar (client-side filter)
 - Favorite toggle per card

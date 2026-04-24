@@ -163,7 +163,7 @@ City-GPT-SuperApp/
 │   │   │   │   ├── migrate.ts       ← Auto-migration + seed (safe, idempotent)
 │   │   │   │   ├── activity.ts      ← Activity logging helper
 │   │   │   │   └── backup.ts        ← Auto-backup system
-│   │   │   ├── AppCard.svelte       ← App card component
+│   │   │   ├── AppCard.svelte       ← App card (icon, domain, info popup, launch)
 │   │   │   └── IconPicker.svelte    ← Emoji icon picker (80+ icons)
 │   │   └── routes/
 │   │       ├── login/               ← Terminal login (3 auth tabs, boot animation)
